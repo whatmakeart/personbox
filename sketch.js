@@ -39,7 +39,7 @@ function startCamera() {
   });
   
   video.size(640, 480);
-  video.hide(); // Hide the raw HTML video element, we will draw it on the p5 canvas
+  video.hide(); // Hide the raw HTML video element, since it is drawn on the p5 canvas
 }
 
 function switchCamera() {
@@ -87,12 +87,10 @@ function draw() {
   
   // Draw the video frame to the canvas
   if (video) {
-    // If using the front camera, you might want to mirror the video horizontally
-    // Un-comment the next 3 lines if you want a mirror effect for the front camera
-    /* if (currentFacingMode === 'user') {
+ if (currentFacingMode === 'user') {
       translate(width, 0);
       scale(-1, 1);
-    } */
+    }
     
     image(video, 0, 0, width, height);
   }
@@ -101,7 +99,7 @@ function draw() {
   for (let i = 0; i < detections.length; i++) {
     let object = detections[i];
     
-    // We only want to draw boxes for people
+    // Only  draw boxes for people
     if (object.label === 'person') {
       stroke(0, 255, 0); // Green box
       strokeWeight(4);
