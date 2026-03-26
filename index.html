@@ -2,140 +2,203 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Ultimate AI Vision Tracker</title>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
     <script src="https://unpkg.com/ml5@latest/dist/ml5.min.js"></script>
 
     <style>
+      :root {
+        --bg: #111;
+        --panel: #222;
+        --panel-border: #444;
+        --btn: #333;
+        --btn-border: #555;
+        --cyan: #00ffff;
+        --pink: #ff69b4;
+        --text: #ffffff;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
       body {
         margin: 0;
         padding: 0;
-        background-color: #111;
-        color: white;
+        background: var(--bg);
+        color: var(--text);
         font-family: monospace;
+        min-height: 100%;
+      }
+
+      body {
         display: flex;
         flex-direction: column;
         align-items: center;
         overflow-x: hidden;
-      }
-      canvas {
-        margin-top: 15px;
-        max-width: 100%;
-        height: auto;
-        border: 2px solid #333;
-        border-radius: 8px;
-        box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
+        padding: 12px;
+        padding-bottom: 24px;
+        -webkit-tap-highlight-color: transparent;
       }
 
-      /* --- NEW FULLSCREEN CSS --- */
-      canvas:fullscreen {
-        width: 100vw !important;
-        height: 100vh !important;
-        max-width: none;
-        object-fit: contain;
-        background-color: #000;
-        border: none;
-        border-radius: 0;
-      }
-      /* Webkit fallback for mobile */
-      canvas:-webkit-full-screen {
-        width: 100vw !important;
-        height: 100vh !important;
-        max-width: none;
-        object-fit: contain;
-        background-color: #000;
+      h1 {
+        margin: 8px 0 10px;
+        font-size: clamp(18px, 3vw, 28px);
+        text-align: center;
+        letter-spacing: 0.04em;
       }
 
-      /* ... Keep the rest of your UI CSS exactly the same ... */
       #ui-container {
-        margin-top: 15px;
+        width: min(100%, 960px);
+        margin-top: 6px;
         display: flex;
         flex-wrap: wrap;
         gap: 8px;
         justify-content: center;
-        max-width: 660px;
-        padding: 0 10px;
+        align-items: center;
       }
+
       button,
       select {
-        padding: 8px 12px;
+        padding: 10px 12px;
         font-size: 13px;
         font-family: monospace;
         font-weight: bold;
-        background-color: #333;
-        color: white;
-        border: 2px solid #555;
-        border-radius: 6px;
+        background: var(--btn);
+        color: var(--text);
+        border: 2px solid var(--btn-border);
+        border-radius: 8px;
         cursor: pointer;
         text-transform: uppercase;
-        transition: all 0.2s;
+        transition:
+          transform 0.12s ease,
+          background-color 0.2s ease,
+          border-color 0.2s ease;
+        min-height: 42px;
       }
+
+      button:hover,
+      select:hover {
+        transform: translateY(-1px);
+      }
+
       button.active {
-        background-color: #00ffff;
+        background: var(--cyan);
         color: #111;
-        border-color: #00ffff;
+        border-color: var(--cyan);
       }
+
       .action-btn {
-        background-color: #ff69b4;
-        border-color: #ff69b4;
+        background: var(--pink);
+        border-color: var(--pink);
         color: #111;
       }
-      .action-btn:active {
-        background-color: #ff1493;
-      }
+
       .control-panel {
         display: none;
-        width: 100%;
-        max-width: 640px;
-        background: #222;
-        padding: 15px;
-        margin-top: 10px;
-        border-radius: 8px;
-        border: 1px solid #444;
-        box-sizing: border-box;
+        width: min(100%, 760px);
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        border-radius: 10px;
+        padding: 14px;
+        margin-top: 12px;
       }
+
       .setting-row {
         margin-bottom: 10px;
         display: flex;
         align-items: center;
         gap: 10px;
+        flex-wrap: wrap;
       }
+
+      .setting-row:last-child {
+        margin-bottom: 0;
+      }
+
       .checkbox-group {
         display: flex;
-        gap: 10px;
+        gap: 12px;
         flex-wrap: wrap;
-        margin-top: 5px;
-        color: #0ff;
+        color: var(--cyan);
       }
+
       label {
-        cursor: pointer;
-        display: flex;
+        display: inline-flex;
         align-items: center;
-        gap: 4px;
+        gap: 6px;
+        cursor: pointer;
+        user-select: none;
       }
+
       #status {
-        margin-top: 10px;
+        margin-top: 12px;
+        margin-bottom: 8px;
         font-size: 14px;
-        color: #0ff;
+        color: var(--cyan);
         text-align: center;
+        width: min(100%, 760px);
+        line-height: 1.45;
+      }
+
+      canvas {
+        margin-top: 12px;
+        display: block;
+        max-width: 100%;
+        height: auto !important;
+        border: 2px solid #333;
+        border-radius: 10px;
+        box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
+        touch-action: none;
+      }
+
+      .help {
+        margin-top: 8px;
+        font-size: 12px;
+        color: #aaa;
+        text-align: center;
+        width: min(100%, 760px);
+        line-height: 1.4;
+      }
+
+      @media (max-width: 700px) {
+        body {
+          padding: 10px;
+        }
+
+        #ui-container {
+          gap: 6px;
+        }
+
+        button,
+        select {
+          font-size: 12px;
+          padding: 10px 10px;
+        }
+
+        .control-panel {
+          padding: 12px;
+        }
       }
     </style>
   </head>
   <body>
+    <h1>Ultimate AI Vision Tracker</h1>
+
     <div id="ui-container">
-      <button class="action-btn" id="camBtn">Swap Camera</button>
-      <button class="action-btn" id="fsBtn">Full Screen</button>
+      <button class="action-btn" id="camBtn" type="button">Swap Camera</button>
+      <button class="action-btn" id="fsBtn" type="button">Full Screen</button>
 
-      <button class="modeBtn active" data-mode="mocap">Neon Mocap</button>
-      <button class="modeBtn" data-mode="hud">Data HUD</button>
-      <button class="modeBtn" data-mode="box">Bounding Box</button>
-      <button class="modeBtn" data-mode="seg">Segmentation Lab</button>
-
-      <button class="modeBtn" data-mode="depthmap">Depth Mask</button>
-      <button class="modeBtn" data-mode="pointcloud">Point Cloud</button>
-      <button class="modeBtn" data-mode="mesh">3D Mesh</button>
+      <button class="modeBtn active" data-mode="mocap" type="button">Neon Mocap</button>
+      <button class="modeBtn" data-mode="hud" type="button">Data HUD</button>
+      <button class="modeBtn" data-mode="box" type="button">Bounding Box</button>
+      <button class="modeBtn" data-mode="seg" type="button">Segmentation Lab</button>
+      <button class="modeBtn" data-mode="depthmap" type="button">Depth Mask</button>
+      <button class="modeBtn" data-mode="pointcloud" type="button">Point Cloud</button>
+      <button class="modeBtn" data-mode="mesh" type="button">3D Mesh</button>
     </div>
 
     <div id="seg-settings" class="control-panel">
@@ -146,6 +209,7 @@
           <option value="selfie">Selfie (Silhouette + Faster)</option>
         </select>
       </div>
+
       <div class="setting-row">
         <span>Render Style:</span>
         <select id="renderStyle">
@@ -154,6 +218,7 @@
           <option value="color">Body Coloring Only</option>
         </select>
       </div>
+
       <div id="bp-controls">
         <div class="setting-row">
           <label>
@@ -161,6 +226,7 @@
             Show Part Labels
           </label>
         </div>
+
         <div class="setting-row">
           <span>Track Parts:</span>
           <div class="checkbox-group">
@@ -194,7 +260,8 @@
       </div>
     </div>
 
-    <div id="status">Booting AI Models (This may take a moment)...</div>
+    <div id="status">Booting AI models. Allow camera access when prompted.</div>
+    <div class="help">Point Cloud / Mesh: drag to orbit, scroll to zoom.</div>
 
     <script src="sketch.js"></script>
   </body>

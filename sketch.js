@@ -1,22 +1,29 @@
 let video;
+
 // AI Models
 let bodyPose, segBodyPix, segSelfie, depthEstimator;
+
 // Data storage
 let poses = [];
-let segBPResult, segSelfieResult, depthMap;
+let segBPResult = null;
+let segSelfieResult = null;
 let connections, partGroups;
 let partsInitialized = false;
+
+// Depth state
+let pendingDepthResult = null;
+let hasPendingDepthFrame = false;
+
+let renderDepthMap = null;
+let renderDepthDisplay = null;
+let renderSourceFrame = null;
+let renderSourcePixels = null;
 
 // 3D Rendering & Camera Controls
 let depthBuffer;
 let camRotX = 0;
 let camRotY = 0;
 let camZoom = 0;
-let newDataAvailable = false;
-
-// THE FIX: Data Caches to prevent CPU starvation
-let pcPoints = [];
-let meshTriangles = [];
 
 // App State
 let currentFacingMode = "user";
@@ -37,42 +44,105 @@ function preload() {
 }
 
 function setup() {
+  pixelDensity(1);
+  frameRate(30);
+
   createCanvas(cW, cH);
+
   depthBuffer = createGraphics(cW, cH, WEBGL);
+  depthBuffer.pixelDensity(1);
+
   connections = bodyPose.getSkeleton();
+
   startCamera();
   setupUI();
 }
 
+function stopPipelines() {
+  try {
+    if (bodyPose && bodyPose.detectStop) bodyPose.detectStop();
+  } catch (e) {}
+
+  try {
+    if (segBodyPix && segBodyPix.detectStop) segBodyPix.detectStop();
+  } catch (e) {}
+
+  try {
+    if (segSelfie && segSelfie.detectStop) segSelfie.detectStop();
+  } catch (e) {}
+
+  try {
+    if (depthEstimator && depthEstimator.estimateStop) depthEstimator.estimateStop();
+  } catch (e) {}
+
+  if (video && video.elt && video.elt.srcObject) {
+    const tracks = video.elt.srcObject.getTracks();
+    tracks.forEach((track) => track.stop());
+  }
+
+  poses = [];
+  segBPResult = null;
+  segSelfieResult = null;
+
+  pendingDepthResult = null;
+  hasPendingDepthFrame = false;
+
+  renderDepthMap = null;
+  renderDepthDisplay = null;
+  renderSourceFrame = null;
+  renderSourcePixels = null;
+}
+
 function startCamera() {
-  if (video) video.remove();
-  let constraints = { video: { facingMode: currentFacingMode }, audio: false };
+  stopPipelines();
+
+  if (video) {
+    video.remove();
+    video = null;
+  }
+
+  const constraints = {
+    video: {
+      facingMode: currentFacingMode,
+      width: { ideal: vW },
+      height: { ideal: vH },
+    },
+    audio: false,
+  };
+
   video = createCapture(constraints, () => {
     waitForVideo();
   });
+
   video.size(vW, vH);
   video.hide();
 }
 
 function waitForVideo() {
   if (video && video.elt && video.elt.readyState === 4 && video.elt.videoWidth > 0) {
-    document.getElementById("status").innerText = "Booting Models...";
+    const statusEl = document.getElementById("status");
+    if (statusEl) statusEl.innerText = "Booting Models...";
+
     bodyPose.detectStart(video, (res) => {
-      poses = res;
+      poses = res || [];
     });
+
     segBodyPix.detectStart(video, (res) => {
       segBPResult = res;
       initParts();
     });
+
     segSelfie.detectStart(video, (res) => {
       segSelfieResult = res;
     });
 
     setTimeout(() => {
-      document.getElementById("status").innerText = "All Systems Active";
+      if (statusEl) statusEl.innerText = "All Systems Active";
+
       depthEstimator.estimateStart(video, (res) => {
-        depthMap = res;
-        newDataAvailable = true;
+        if (!res) return;
+        pendingDepthResult = res;
+        hasPendingDepthFrame = true;
       });
     }, 500);
   } else {
@@ -80,13 +150,44 @@ function waitForVideo() {
   }
 }
 
-// Controls for the 3D buffer
+function commitPendingDepthFrame() {
+  if (!hasPendingDepthFrame || !pendingDepthResult) return;
+
+  const res = pendingDepthResult;
+  pendingDepthResult = null;
+  hasPendingDepthFrame = false;
+
+  renderDepthMap = res;
+
+  if (res.sourceFrame) {
+    renderSourceFrame = res.sourceFrame.get();
+    renderSourceFrame.loadPixels();
+    renderSourcePixels = renderSourceFrame.pixels.slice();
+  } else {
+    renderSourceFrame = null;
+    renderSourcePixels = null;
+  }
+
+  if (res.image) {
+    renderDepthDisplay = res.image.get();
+
+    if (res.mask) {
+      const maskCopy = res.mask.get ? res.mask.get() : res.mask;
+      renderDepthDisplay.mask(maskCopy);
+    }
+  } else {
+    renderDepthDisplay = null;
+  }
+}
+
+// Manual Orbit & Zoom Controls
 function mouseDragged() {
   if (currentMode === "pointcloud" || currentMode === "mesh") {
     camRotY += (mouseX - pmouseX) * 0.01;
     camRotX -= (mouseY - pmouseY) * 0.01;
   }
 }
+
 function mouseWheel(event) {
   if (currentMode === "pointcloud" || currentMode === "mesh") {
     camZoom -= event.delta * 0.5;
@@ -96,7 +197,7 @@ function mouseWheel(event) {
 
 function initParts() {
   if (!partsInitialized && segBodyPix.getPartsId) {
-    let parts = segBodyPix.getPartsId();
+    const parts = segBodyPix.getPartsId();
     partGroups = {
       face: [parts.LEFT_FACE, parts.RIGHT_FACE],
       torso: [parts.TORSO_FRONT, parts.TORSO_BACK],
@@ -130,34 +231,54 @@ function initParts() {
 }
 
 function setupUI() {
-  document.getElementById("camBtn").addEventListener("click", () => {
-    currentFacingMode = currentFacingMode === "user" ? "environment" : "user";
-    document.getElementById("status").innerText = "Switching camera...";
-    startCamera();
-  });
+  const camBtn = document.getElementById("camBtn");
+  if (camBtn) {
+    camBtn.addEventListener("click", () => {
+      currentFacingMode = currentFacingMode === "user" ? "environment" : "user";
+      const statusEl = document.getElementById("status");
+      if (statusEl) statusEl.innerText = "Switching camera...";
+      startCamera();
+    });
+  }
 
-  document.getElementById("fsBtn").addEventListener("click", () => {
-    let canvasElt = document.querySelector("canvas");
-    if (canvasElt) {
-      if (!document.fullscreenElement) canvasElt.requestFullscreen().catch((err) => console.log(err));
-      else document.exitFullscreen();
-    }
-  });
+  const fsBtn = document.getElementById("fsBtn");
+  if (fsBtn) {
+    fsBtn.addEventListener("click", () => {
+      const canvasElt = document.querySelector("canvas");
+      if (!canvasElt) return;
 
-  document.getElementById("segModelSelect").addEventListener("change", (e) => {
-    activeSegModel = e.target.value;
-    document.getElementById("bp-controls").style.display = activeSegModel === "bodypix" ? "block" : "none";
-  });
+      if (!document.fullscreenElement) {
+        canvasElt.requestFullscreen().catch((err) => console.log(err));
+      } else {
+        document.exitFullscreen();
+      }
+    });
+  }
 
-  let modeButtons = document.querySelectorAll(".modeBtn");
+  const segModelSelect = document.getElementById("segModelSelect");
+  if (segModelSelect) {
+    segModelSelect.addEventListener("change", (e) => {
+      activeSegModel = e.target.value;
+      const bpControls = document.getElementById("bp-controls");
+      if (bpControls) {
+        bpControls.style.display = activeSegModel === "bodypix" ? "block" : "none";
+      }
+    });
+  }
+
+  const modeButtons = document.querySelectorAll(".modeBtn");
   modeButtons.forEach((btn) => {
     btn.addEventListener("click", (e) => {
       modeButtons.forEach((b) => b.classList.remove("active"));
-      e.target.classList.add("active");
-      currentMode = e.target.getAttribute("data-mode");
+      e.currentTarget.classList.add("active");
+      currentMode = e.currentTarget.getAttribute("data-mode");
 
-      document.getElementById("seg-settings").style.display = currentMode === "seg" ? "block" : "none";
-      document.getElementById("mesh-settings").style.display = currentMode === "mesh" ? "block" : "none";
+      const segSettings = document.getElementById("seg-settings");
+      const meshSettings = document.getElementById("mesh-settings");
+
+      if (segSettings) segSettings.style.display = currentMode === "seg" ? "block" : "none";
+      if (meshSettings) meshSettings.style.display = currentMode === "mesh" ? "block" : "none";
+
       camRotX = 0;
       camRotY = 0;
       camZoom = 0;
@@ -165,91 +286,19 @@ function setupUI() {
   });
 }
 
-// THE FIX: Heavy Data Extraction happens ONLY when new data is ready
-function updatePointCloudData() {
-  pcPoints = [];
-  if (!depthMap || !depthMap.sourceFrame) return;
-  let src = depthMap.sourceFrame;
-  src.loadPixels();
-  let step = 4; // Safest increment for mobile devices
-
-  for (let y = 0; y < vH; y += step) {
-    for (let x = 0; x < vW; x += step) {
-      try {
-        let depth = depthMap.getDepthAt(x, y);
-        if (depth > 0) {
-          let idx = (x + y * vW) * 4;
-          let z = map(depth, 0, 1, 200, -200);
-          pcPoints.push({ x: x, y: y, z: z, r: src.pixels[idx], g: src.pixels[idx + 1], b: src.pixels[idx + 2] });
-        }
-      } catch (e) {}
-    }
-  }
-}
-
-function updateMeshData() {
-  meshTriangles = [];
-  if (!depthMap || typeof depthMap.getDepthAt !== "function") return;
-  let step = 4;
-  let cols = floor(vW / step);
-  let rows = floor(vH / step);
-
-  for (let y = 0; y < rows - 1; y++) {
-    for (let x = 0; x < cols - 1; x++) {
-      let x1 = x * step,
-        y1 = y * step,
-        x2 = (x + 1) * step,
-        y2 = y * step;
-      let x3 = x * step,
-        y3 = (y + 1) * step,
-        x4 = (x + 1) * step,
-        y4 = (y + 1) * step;
-
-      try {
-        let d1 = depthMap.getDepthAt(x1, y1);
-        let d2 = depthMap.getDepthAt(x2, y2);
-        let d3 = depthMap.getDepthAt(x3, y3);
-        let d4 = depthMap.getDepthAt(x4, y4);
-
-        let z1 = map(d1, 0, 1, 200, -200);
-        let z2 = map(d2, 0, 1, 200, -200);
-        let z3 = map(d3, 0, 1, 200, -200);
-        let z4 = map(d4, 0, 1, 200, -200);
-
-        if (d1 > 0 && d2 > 0 && d3 > 0 && abs(d1 - d2) < 0.1 && abs(d1 - d3) < 0.1) {
-          meshTriangles.push([
-            { x: x1, y: y1, z: z1, u: x1 / vW, v: y1 / vH },
-            { x: x2, y: y2, z: z2, u: x2 / vW, v: y2 / vH },
-            { x: x3, y: y3, z: z3, u: x3 / vW, v: y3 / vH },
-          ]);
-        }
-        if (d2 > 0 && d4 > 0 && d3 > 0 && abs(d2 - d4) < 0.1 && abs(d2 - d3) < 0.1) {
-          meshTriangles.push([
-            { x: x2, y: y2, z: z2, u: x2 / vW, v: y2 / vH },
-            { x: x4, y: y4, z: z4, u: x4 / vW, v: y4 / vH },
-            { x: x3, y: y3, z: z3, u: x3 / vW, v: y3 / vH },
-          ]);
-        }
-      } catch (e) {}
-    }
-  }
-}
-
 function draw() {
   background(15);
   if (!video) return;
 
-  // ONLY extract data if the async thread delivered a new frame
-  if (newDataAvailable && depthMap) {
-    if (currentMode === "pointcloud") updatePointCloudData();
-    if (currentMode === "mesh") updateMeshData();
-    newDataAvailable = false;
+  if (hasPendingDepthFrame) {
+    commitPendingDepthFrame();
   }
 
   if (currentMode === "mocap" || currentMode === "hud" || currentMode === "box") {
     tint(255, 120);
     image(video, 0, 0, width, height);
     noTint();
+
     poses.forEach((pose) => {
       if (currentMode === "mocap") drawNeonMocap(pose);
       if (currentMode === "hud") drawDataHUD(pose);
@@ -258,20 +307,26 @@ function draw() {
   } else if (currentMode === "seg") {
     drawSegmentationLab();
   } else if (currentMode === "depthmap") {
-    if (depthMap) drawDepthMask();
+    drawDepthMask();
   } else if (currentMode === "pointcloud" || currentMode === "mesh") {
-    depthBuffer.clear();
-    depthBuffer.background(0);
-    depthBuffer.push();
-    depthBuffer.translate(0, 0, camZoom);
-    depthBuffer.rotateX(camRotX);
-    depthBuffer.rotateY(camRotY);
+    if (renderDepthMap) {
+      depthBuffer.clear();
+      depthBuffer.background(0);
 
-    if (currentMode === "pointcloud") drawPointCloud();
-    if (currentMode === "mesh") drawMesh();
+      depthBuffer.push();
+      depthBuffer.translate(0, 0, camZoom);
+      depthBuffer.rotateX(camRotX);
+      depthBuffer.rotateY(camRotY);
 
-    depthBuffer.pop();
-    image(depthBuffer, 0, 0);
+      if (currentMode === "pointcloud") drawPointCloud(renderDepthMap);
+      if (currentMode === "mesh") drawMesh(renderDepthMap);
+
+      depthBuffer.pop();
+      image(depthBuffer, 0, 0);
+    } else {
+      image(video, 0, 0, width, height);
+    }
+
     fill(0, 255, 255);
     noStroke();
     textSize(16);
@@ -280,79 +335,155 @@ function draw() {
   }
 }
 
+// --- DEPTH RENDERING ---
 function drawDepthMask() {
-  if (depthMap && depthMap.image && depthMap.mask) {
-    try {
-      // Create a safely cloned image so we don't corrupt the ml5 background pipeline
-      let safeCopy = depthMap.image.get();
-      safeCopy.mask(depthMap.mask);
-      image(safeCopy, 0, 0, width, height);
-    } catch (e) {}
+  if (renderDepthDisplay) {
+    image(renderDepthDisplay, 0, 0, width, height);
+  } else if (renderDepthMap && renderDepthMap.image) {
+    image(renderDepthMap.image, 0, 0, width, height);
+  } else {
+    image(video, 0, 0, width, height);
   }
 }
 
-// 60FPS Draw Loop: We only loop over the pre-calculated array!
-function drawPointCloud() {
+function drawPointCloud(depthState) {
+  if (!depthState || !renderSourcePixels) return;
+
+  const step = 4;
+
   depthBuffer.push();
   depthBuffer.scale(2);
   depthBuffer.translate(-vW / 2, -vH / 2, 0);
-  depthBuffer.strokeWeight(4);
-  for (let p of pcPoints) {
-    depthBuffer.stroke(p.r, p.g, p.b, 255);
-    depthBuffer.point(p.x, p.y, p.z);
+  depthBuffer.strokeWeight(3);
+
+  for (let y = 0; y < vH; y += step) {
+    for (let x = 0; x < vW; x += step) {
+      let depth;
+      try {
+        depth = depthState.getDepthAt(x, y);
+      } catch (e) {
+        continue;
+      }
+
+      if (!isFinite(depth) || depth <= 0) continue;
+
+      const index = (x + y * vW) * 4;
+      const z = map(depth, 0, 1, 200, -200);
+
+      depthBuffer.stroke(renderSourcePixels[index], renderSourcePixels[index + 1], renderSourcePixels[index + 2], 255);
+      depthBuffer.point(x, y, z);
+    }
   }
+
   depthBuffer.pop();
 }
 
-function drawMesh() {
-  let useTexture = document.getElementById("textureToggle").checked;
+function drawMesh(depthState) {
+  if (!depthState || typeof depthState.getDepthAt !== "function") return;
+
+  const textureToggle = document.getElementById("textureToggle");
+  const useTexture = !!(textureToggle && textureToggle.checked && renderSourceFrame);
+
   depthBuffer.noStroke();
   if (!useTexture) {
     depthBuffer.fill(0, 255, 255);
     depthBuffer.stroke(0, 150, 150);
   }
 
+  const step = 4;
+  const cols = floor(vW / step);
+  const rows = floor(vH / step);
+
   depthBuffer.push();
   depthBuffer.scale(2);
   depthBuffer.translate(-vW / 2, -vH / 2, 0);
-  if (useTexture && depthMap && depthMap.sourceFrame) {
+
+  if (useTexture) {
     depthBuffer.textureMode(NORMAL);
-    depthBuffer.texture(depthMap.sourceFrame);
+    depthBuffer.texture(renderSourceFrame);
   }
 
   depthBuffer.beginShape(TRIANGLES);
-  for (let tri of meshTriangles) {
-    if (useTexture) {
-      depthBuffer.vertex(tri[0].x, tri[0].y, tri[0].z, tri[0].u, tri[0].v);
-      depthBuffer.vertex(tri[1].x, tri[1].y, tri[1].z, tri[1].u, tri[1].v);
-      depthBuffer.vertex(tri[2].x, tri[2].y, tri[2].z, tri[2].u, tri[2].v);
-    } else {
-      depthBuffer.vertex(tri[0].x, tri[0].y, tri[0].z);
-      depthBuffer.vertex(tri[1].x, tri[1].y, tri[1].z);
-      depthBuffer.vertex(tri[2].x, tri[2].y, tri[2].z);
+
+  for (let y = 0; y < rows - 1; y++) {
+    for (let x = 0; x < cols - 1; x++) {
+      const x1 = x * step;
+      const y1 = y * step;
+      const x2 = (x + 1) * step;
+      const y2 = y * step;
+      const x3 = x * step;
+      const y3 = (y + 1) * step;
+      const x4 = (x + 1) * step;
+      const y4 = (y + 1) * step;
+
+      let d1, d2, d3, d4;
+
+      try {
+        d1 = depthState.getDepthAt(x1, y1);
+        d2 = depthState.getDepthAt(x2, y2);
+        d3 = depthState.getDepthAt(x3, y3);
+        d4 = depthState.getDepthAt(x4, y4);
+      } catch (e) {
+        continue;
+      }
+
+      if (![d1, d2, d3, d4].every((d) => isFinite(d) && d > 0)) continue;
+
+      const z1 = map(d1, 0, 1, 200, -200);
+      const z2 = map(d2, 0, 1, 200, -200);
+      const z3 = map(d3, 0, 1, 200, -200);
+      const z4 = map(d4, 0, 1, 200, -200);
+
+      if (abs(d1 - d2) < 0.1 && abs(d1 - d3) < 0.1) {
+        if (useTexture) {
+          depthBuffer.vertex(x1, y1, z1, x1 / vW, y1 / vH);
+          depthBuffer.vertex(x2, y2, z2, x2 / vW, y2 / vH);
+          depthBuffer.vertex(x3, y3, z3, x3 / vW, y3 / vH);
+        } else {
+          depthBuffer.vertex(x1, y1, z1);
+          depthBuffer.vertex(x2, y2, z2);
+          depthBuffer.vertex(x3, y3, z3);
+        }
+      }
+
+      if (abs(d2 - d4) < 0.1 && abs(d2 - d3) < 0.1) {
+        if (useTexture) {
+          depthBuffer.vertex(x2, y2, z2, x2 / vW, y2 / vH);
+          depthBuffer.vertex(x4, y4, z4, x4 / vW, y4 / vH);
+          depthBuffer.vertex(x3, y3, z3, x3 / vW, y3 / vH);
+        } else {
+          depthBuffer.vertex(x2, y2, z2);
+          depthBuffer.vertex(x4, y4, z4);
+          depthBuffer.vertex(x3, y3, z3);
+        }
+      }
     }
   }
+
   depthBuffer.endShape();
   depthBuffer.pop();
 }
 
 // --- 2D DRAWING ---
 function drawSegmentationLab() {
-  let activeMask =
+  const activeMask =
     activeSegModel === "selfie" && segSelfieResult
       ? segSelfieResult.mask
       : activeSegModel === "bodypix" && segBPResult
         ? segBPResult.mask
         : null;
+
   if (!activeMask) {
     image(video, 0, 0, width, height);
     return;
   }
 
-  let renderStyle = document.getElementById("renderStyle").value;
+  const renderStyleEl = document.getElementById("renderStyle");
+  const renderStyle = renderStyleEl ? renderStyleEl.value : "bg";
+
   if (renderStyle === "bg" || renderStyle === "both") {
     background(0, 0, 255);
-    let maskedVideo = video.get();
+    const maskedVideo = video.get();
     maskedVideo.mask(activeMask);
     image(maskedVideo, 0, 0, width, height);
   } else {
@@ -364,29 +495,37 @@ function drawSegmentationLab() {
     image(activeMask, 0, 0, width, height);
     noTint();
   }
-  if (activeSegModel === "bodypix" && partsInitialized && segBPResult) trackAndLabelParts(segBPResult);
+
+  if (activeSegModel === "bodypix" && partsInitialized && segBPResult) {
+    trackAndLabelParts(segBPResult);
+  }
 }
 
 function trackAndLabelParts(result) {
-  let showLabels = document.getElementById("showLabels").checked;
-  let activeParts = Array.from(document.querySelectorAll(".part-toggle:checked")).map((cb) => cb.value);
-  let centroids = {
+  const showLabelsEl = document.getElementById("showLabels");
+  const showLabels = !!(showLabelsEl && showLabelsEl.checked);
+
+  const activeParts = Array.from(document.querySelectorAll(".part-toggle:checked")).map((cb) => cb.value);
+
+  const centroids = {
     face: { x: 0, y: 0, count: 0, color: [255, 255, 0] },
     torso: { x: 0, y: 0, count: 0, color: [255, 0, 255] },
     arms: { x: 0, y: 0, count: 0, color: [0, 255, 255] },
     legs: { x: 0, y: 0, count: 0, color: [0, 255, 0] },
   };
-  let gridSize = 5;
-  let scaleX = width / vW;
-  let scaleY = height / vH;
+
+  const gridSize = 5;
+  const scaleX = width / vW;
+  const scaleY = height / vH;
 
   for (let y = 0; y < vH; y += gridSize) {
     for (let x = 0; x < vW; x += gridSize) {
-      let idx = y * vW + x;
-      let partId = result.data[idx];
+      const idx = y * vW + x;
+      const partId = result.data[idx];
       if (partId === -1) continue;
-      for (let category of activeParts) {
-        if (partGroups[category].includes(partId)) {
+
+      for (const category of activeParts) {
+        if (partGroups[category] && partGroups[category].includes(partId)) {
           fill(centroids[category].color[0], centroids[category].color[1], centroids[category].color[2], 150);
           noStroke();
           circle(x * scaleX, y * scaleY, gridSize * scaleX);
@@ -397,13 +536,15 @@ function trackAndLabelParts(result) {
       }
     }
   }
+
   if (showLabels) {
     textAlign(CENTER, CENTER);
     textSize(24);
     stroke(0);
     strokeWeight(4);
-    for (let category of activeParts) {
-      let data = centroids[category];
+
+    for (const category of activeParts) {
+      const data = centroids[category];
       if (data.count > 0) {
         fill(data.color);
         text(category.toUpperCase(), data.x / data.count, data.y / data.count);
@@ -415,35 +556,47 @@ function trackAndLabelParts(result) {
 function drawNeonMocap(pose) {
   strokeWeight(4);
   stroke(0, 255, 255);
-  let scaleX = width / vW;
-  let scaleY = height / vH;
+
+  const scaleX = width / vW;
+  const scaleY = height / vH;
+
   for (let j = 0; j < connections.length; j++) {
-    let pA = pose.keypoints[connections[j][0]];
-    let pB = pose.keypoints[connections[j][1]];
-    if (pA.confidence > 0.1 && pB.confidence > 0.1) line(pA.x * scaleX, pA.y * scaleY, pB.x * scaleX, pB.y * scaleY);
+    const pA = pose.keypoints[connections[j][0]];
+    const pB = pose.keypoints[connections[j][1]];
+    if (pA.confidence > 0.1 && pB.confidence > 0.1) {
+      line(pA.x * scaleX, pA.y * scaleY, pB.x * scaleX, pB.y * scaleY);
+    }
   }
+
   noStroke();
   fill(255, 105, 180);
+
   pose.keypoints.forEach((kp) => {
-    if (kp.confidence > 0.1) circle(kp.x * scaleX, kp.y * scaleY, 10);
+    if (kp.confidence > 0.1) {
+      circle(kp.x * scaleX, kp.y * scaleY, 10);
+    }
   });
 }
 
 function drawDataHUD(pose) {
   textAlign(CENTER, CENTER);
   textSize(14);
-  let scaleX = width / vW;
-  let scaleY = height / vH;
+
+  const scaleX = width / vW;
+  const scaleY = height / vH;
+
   pose.keypoints.forEach((kp) => {
     if (kp.confidence > 0.2 && (kp.name.includes("wrist") || kp.name.includes("ankle") || kp.name === "nose")) {
-      let kx = kp.x * scaleX;
-      let ky = kp.y * scaleY;
+      const kx = kp.x * scaleX;
+      const ky = kp.y * scaleY;
+
       stroke(0, 255, 0);
       strokeWeight(2);
       noFill();
       rect(kx - 15, ky - 15, 30, 30);
       line(kx, ky - 20, kx, ky + 20);
       line(kx - 20, ky, kx + 20, ky);
+
       noStroke();
       fill(0, 255, 0);
       text(kp.name.toUpperCase(), kx, ky - 25);
@@ -452,15 +605,19 @@ function drawDataHUD(pose) {
 }
 
 function drawBoundingBox(pose) {
-  let box = pose.box;
+  const box = pose.box;
   if (!box) return;
-  let scaleX = width / vW;
-  let scaleY = height / vH;
+
+  const scaleX = width / vW;
+  const scaleY = height / vH;
+
   stroke(255, 255, 0);
   strokeWeight(4);
   noFill();
   rect(box.xMin * scaleX, box.yMin * scaleY, box.width * scaleX, box.height * scaleY);
-  let avgConf = pose.keypoints.reduce((a, b) => a + b.confidence, 0) / pose.keypoints.length;
+
+  const avgConf = pose.keypoints.reduce((a, b) => a + b.confidence, 0) / pose.keypoints.length;
+
   noStroke();
   fill(255, 255, 0);
   textSize(22);
