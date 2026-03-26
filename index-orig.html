@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Person Detection Camera</title>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+    <script src="https://unpkg.com/ml5@0.12.2/dist/ml5.min.js"></script>
+
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        background-color: #222;
+        color: white;
+        font-family: sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      canvas {
+        margin-top: 15px;
+        max-width: 100%;
+        height: auto;
+        border: 2px solid #555;
+        border-radius: 8px;
+      }
+      #controls {
+        margin-top: 15px;
+      }
+      button {
+        padding: 12px 24px;
+        font-size: 16px;
+        background-color: #007bff;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+      }
+      button:active {
+        background-color: #0056b3;
+      }
+      #status {
+        margin-top: 10px;
+        font-size: 14px;
+        color: #aaa;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="controls">
+      <button id="switchBtn">Switch Camera</button>
+    </div>
+    <div id="status">Loading model...</div>
+
+    <script src="sketch.js"></script>
+  </body>
+</html>

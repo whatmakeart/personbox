@@ -3,57 +3,180 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Person Detection Camera</title>
+    <title>Ultimate AI Vision Tracker</title>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
-    <script src="https://unpkg.com/ml5@0.12.2/dist/ml5.min.js"></script>
+    <script src="https://unpkg.com/ml5@latest/dist/ml5.min.js"></script>
 
     <style>
       body {
         margin: 0;
         padding: 0;
-        background-color: #222;
+        background-color: #111;
         color: white;
-        font-family: sans-serif;
+        font-family: monospace;
         display: flex;
         flex-direction: column;
         align-items: center;
+        overflow-x: hidden;
       }
       canvas {
         margin-top: 15px;
         max-width: 100%;
         height: auto;
-        border: 2px solid #555;
+        border: 2px solid #333;
         border-radius: 8px;
+        box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
       }
-      #controls {
+      #ui-container {
         margin-top: 15px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: center;
+        max-width: 660px;
+        padding: 0 10px;
       }
-      button {
-        padding: 12px 24px;
-        font-size: 16px;
-        background-color: #007bff;
+      button,
+      select {
+        padding: 8px 12px;
+        font-size: 13px;
+        font-family: monospace;
+        font-weight: bold;
+        background-color: #333;
         color: white;
-        border: none;
+        border: 2px solid #555;
         border-radius: 6px;
         cursor: pointer;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        text-transform: uppercase;
+        transition: all 0.2s;
       }
-      button:active {
-        background-color: #0056b3;
+      button.active {
+        background-color: #00ffff;
+        color: #111;
+        border-color: #00ffff;
       }
+
+      .action-btn {
+        background-color: #ff69b4;
+        border-color: #ff69b4;
+        color: #111;
+      }
+      .action-btn:active {
+        background-color: #ff1493;
+      }
+
+      .control-panel {
+        display: none;
+        width: 100%;
+        max-width: 640px;
+        background: #222;
+        padding: 15px;
+        margin-top: 10px;
+        border-radius: 8px;
+        border: 1px solid #444;
+        box-sizing: border-box;
+      }
+      .setting-row {
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .checkbox-group {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 5px;
+        color: #0ff;
+      }
+      label {
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+
       #status {
         margin-top: 10px;
         font-size: 14px;
-        color: #aaa;
+        color: #0ff;
+        text-align: center;
       }
     </style>
   </head>
   <body>
-    <div id="controls">
-      <button id="switchBtn">Switch Camera</button>
+    <div id="ui-container">
+      <button class="action-btn" id="camBtn">Swap Camera</button>
+      <button class="action-btn" id="fsBtn">Full Screen</button>
+
+      <button class="modeBtn active" data-mode="mocap">Neon Mocap</button>
+      <button class="modeBtn" data-mode="hud">Data HUD</button>
+      <button class="modeBtn" data-mode="box">Bounding Box</button>
+      <button class="modeBtn" data-mode="seg">Segmentation Lab</button>
+
+      <button class="modeBtn" data-mode="depthmap">Depth Mask</button>
+      <button class="modeBtn" data-mode="pointcloud">Point Cloud</button>
+      <button class="modeBtn" data-mode="mesh">3D Mesh</button>
     </div>
-    <div id="status">Loading model...</div>
+
+    <div id="seg-settings" class="control-panel">
+      <div class="setting-row">
+        <span>AI Model:</span>
+        <select id="segModelSelect">
+          <option value="bodypix">BodyPix (Parts + Slower)</option>
+          <option value="selfie">Selfie (Silhouette + Faster)</option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <span>Render Style:</span>
+        <select id="renderStyle">
+          <option value="both">Separation + Body Color</option>
+          <option value="bg">Background Separation Only</option>
+          <option value="color">Body Coloring Only</option>
+        </select>
+      </div>
+      <div id="bp-controls">
+        <div class="setting-row">
+          <label>
+            <input type="checkbox" id="showLabels" checked />
+            Show Part Labels
+          </label>
+        </div>
+        <div class="setting-row">
+          <span>Track Parts:</span>
+          <div class="checkbox-group">
+            <label>
+              <input type="checkbox" class="part-toggle" value="face" checked />
+              Face
+            </label>
+            <label>
+              <input type="checkbox" class="part-toggle" value="torso" checked />
+              Torso
+            </label>
+            <label>
+              <input type="checkbox" class="part-toggle" value="arms" checked />
+              Arms
+            </label>
+            <label>
+              <input type="checkbox" class="part-toggle" value="legs" checked />
+              Legs
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="mesh-settings" class="control-panel">
+      <div class="setting-row">
+        <label>
+          <input type="checkbox" id="textureToggle" checked />
+          Apply Video Texture to Mesh
+        </label>
+      </div>
+    </div>
+
+    <div id="status">Booting AI Models (This may take a moment)...</div>
 
     <script src="sketch.js"></script>
   </body>
